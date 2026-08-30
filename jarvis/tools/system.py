@@ -311,6 +311,16 @@ def list_processes(top: int = 15) -> dict:
 # --------------------------------------------------------------------------
 
 
+def _ps_single_quote(s: str) -> str:
+    """Render `s` as a single-quoted PowerShell string literal.
+
+    Unlike double-quoted PS strings, single-quoted ones never interpolate
+    `$variable` references or `$(...)` subexpressions -- the only escaping
+    a single-quoted literal needs is doubling embedded single quotes.
+    """
+    return "'" + s.replace("'", "''") + "'"
+
+
 @tool(
     risk=Risk.SAFE,
     params={"title": "Notification heading.", "message": "Body text."},
@@ -319,15 +329,21 @@ def list_processes(top: int = 15) -> dict:
 )
 def notify(title: str, message: str = "") -> dict:
     """Show a Windows toast notification."""
-    safe_title = title.replace('"', "'")
-    safe_message = message.replace('"', "'")
+    # Titles/bodies can contain arbitrary user- or web-sourced text (this tool
+    # is Risk.SAFE, so nothing prompts for confirmation before it runs). They
+    # must land in the script as inert data, never as PowerShell syntax. A
+    # single-quoted PS literal doesn't interpolate $variables or $(...)
+    # subexpressions the way a double-quoted one does, so we escape into that
+    # form rather than substituting quote characters into a double-quoted one.
+    safe_title = _ps_single_quote(title.replace("\r", " ").replace("\n", " "))
+    safe_message = _ps_single_quote(message.replace("\r", " ").replace("\n", " "))
     script = f"""
     [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] > $null
     $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(
         [Windows.UI.Notifications.ToastTemplateType]::ToastText02)
     $texts = $template.GetElementsByTagName("text")
-    $texts.Item(0).AppendChild($template.CreateTextNode("{safe_title}")) > $null
-    $texts.Item(1).AppendChild($template.CreateTextNode("{safe_message}")) > $null
+    $texts.Item(0).AppendChild($template.CreateTextNode({safe_title})) > $null
+    $texts.Item(1).AppendChild($template.CreateTextNode({safe_message})) > $null
     $toast = [Windows.UI.Notifications.ToastNotification]::new($template)
     [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Jarvis").Show($toast)
     """
