@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis</title>
+  <link rel="stylesheet" href="/static/face.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ── Sidebar ─────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark"><span></span></div>
+      <div>
+        <h1>JARVIS</h1>
+        <p id="brand-sub">local assistant</p>
+      </div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <button class="nav-item active" data-view="assistant">
+        <span class="ico">◈</span> Assistant
+      </button>
+      <button class="nav-item" data-view="apps">
+        <span class="ico">▤</span> Applications
+      </button>
+      <button class="nav-item" data-view="routines">
+        <span class="ico">⌁</span> Routines
+      </button>
+      <button class="nav-item" data-view="activity">
+        <span class="ico">≡</span> Activity
+        <em class="badge" id="activity-badge" hidden>0</em>
+      </button>
+      <button class="nav-item" data-view="capabilities">
+        <span class="ico">⚙</span> Capabilities
+      </button>
+      <button class="nav-item" data-view="settings">
+        <span class="ico">⚒</span> Settings
+      </button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <button class="wake-chip" id="wake-chip" title="Toggle always-on listening">
+        <span class="dot"></span>
+        <div>
+          <strong id="wake-title">Listening</strong>
+          <small id="wake-sub">say “Hey Jarvis”</small>
+        </div>
+      </button>
+      <div class="secure-chip" id="secure-chip">
+        <span class="dot"></span>
+        <div>
+          <strong>Standard user</strong>
+          <small>no admin rights</small>
+        </div>
+      </div>
+      <div class="meta-row">
+        <span>Credit</span><span id="credit">—</span>
+      </div>
+      <div class="meta-row">
+        <span>Tokens</span><span id="tokens">0</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Main ────────────────────────────────────────────────── -->
+  <main class="main">
+    <header class="topbar">
+      <div class="state-pill" id="state-pill">
+        <span class="pulse"></span><span id="state-label">idle</span>
+      </div>
+      <div class="topbar-actions">
+        <button class="ghost" id="btn-reset" title="Clear the conversation">Clear</button>
+        <button class="ghost danger" id="btn-panic" title="Stop everything now">Stop</button>
+      </div>
+    </header>
+
+    <!-- Assistant -->
+    <section class="view active" data-view="assistant">
+      <div class="stage">
+        <div class="orb" id="orb">
+          <div class="orb-halo" id="orb-halo"></div>
+          <div class="face-mount" id="face"></div>
+        </div>
+        <div class="convo-pill" id="convo-pill">
+          <i></i><i></i><i></i> <span>listening — just keep talking</span>
+        </div>
+        <p class="stage-hint" id="stage-hint">Say <kbd>Hey Jarvis</kbd> or click the face to talk</p>
+      </div>
+
+      <div class="stream" id="stream"></div>
+
+      <form class="composer" id="composer">
+        <input id="composer-input" type="text" autocomplete="off"
+               placeholder="Type a command, or press the hotkey and speak…">
+        <button type="button" class="mic" id="btn-mic" title="Talk to Jarvis">🎙</button>
+        <button type="submit" class="send">Send</button>
+      </form>
+    </section>
+
+    <!-- Applications -->
+    <section class="view" data-view="apps">
+      <div class="view-head">
+        <h2>Applications</h2>
+        <div class="row">
+          <input id="app-search" class="field" placeholder="Search installed apps…">
+          <button class="ghost" id="btn-reindex">Re-scan</button>
+        </div>
+      </div>
+      <div class="app-grid" id="app-grid"></div>
+    </section>
+
+    <!-- Routines -->
+    <section class="view" data-view="routines">
+      <div class="view-head">
+        <h2>Routines</h2>
+        <p class="sub">Named multi-step shortcuts. Ask Jarvis to “save that as a routine” to add one.</p>
+      </div>
+      <div class="routine-grid" id="routine-grid"></div>
+    </section>
+
+    <!-- Activity -->
+    <section class="view" data-view="activity">
+      <div class="view-head">
+        <h2>Activity log</h2>
+        <p class="sub">Every action Jarvis has taken on this machine, appended to <code>data/audit.jsonl</code>.</p>
+      </div>
+      <div class="log" id="audit-log"></div>
+    </section>
+
+    <!-- Capabilities -->
+    <section class="view" data-view="capabilities">
+      <div class="view-head">
+        <h2>Capabilities</h2>
+        <p class="sub">Every tool Jarvis can use, and whether it runs freely or asks first.</p>
+      </div>
+      <div class="tool-list" id="tool-list"></div>
+    </section>
+
+    <!-- Settings -->
+    <section class="view" data-view="settings">
+      <div class="view-head"><h2>Settings</h2></div>
+      <div class="settings" id="settings"></div>
+    </section>
+  </main>
+
+  <!-- ── Right rail ──────────────────────────────────────────── -->
+  <aside class="rail">
+    <h3>System</h3>
+    <div class="meters" id="meters"></div>
+    <h3>Quick launch</h3>
+    <div class="quick" id="quick"></div>
+    <h3>Now running</h3>
+    <div class="running" id="running"></div>
+  </aside>
+</div>
+
+<!-- Permission prompts -->
+<div class="perm-layer" id="perm-layer"></div>
+<div class="toast-layer" id="toast-layer"></div>
+
+<script src="/static/face.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

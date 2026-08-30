@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Jarvis</title>
+<link rel="stylesheet" href="/static/face.css">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: transparent;
+    overflow: hidden;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    user-select: none;
+    cursor: pointer;
+  }
+  .wrap { width: 100%; height: 100%; display: grid; place-items: center; position: relative; }
+
+  .face-box {
+    position: relative;
+    width: 168px; height: 168px;
+    display: grid; place-items: center;
+    transition: transform .2s cubic-bezier(.2,.8,.3,1);
+  }
+  .face-box:hover { transform: scale(1.05); }
+
+  .halo {
+    position: absolute; inset: -18%;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(34,211,238,.26), transparent 66%);
+    transition: background .45s ease, transform .12s ease-out;
+    pointer-events: none;
+  }
+  [data-state="listening"] .halo { background: radial-gradient(circle, rgba(56,189,248,.34), transparent 66%); }
+  [data-state="thinking"]  .halo,
+  [data-state="transcribing"] .halo { background: radial-gradient(circle, rgba(251,191,36,.30), transparent 66%); }
+  [data-state="speaking"]  .halo { background: radial-gradient(circle, rgba(52,211,153,.32), transparent 66%); }
+
+  .label {
+    position: absolute; bottom: 2px; width: 100%; text-align: center;
+    font-size: 10px; letter-spacing: 1.8px; text-transform: uppercase;
+    color: rgba(148, 205, 235, .9);
+    text-shadow: 0 0 10px rgba(0,0,0,.95);
+    transition: color .3s ease;
+  }
+  [data-state="speaking"] .label { color: rgba(134, 239, 172, .95); }
+  [data-state="thinking"] .label,
+  [data-state="transcribing"] .label { color: rgba(253, 224, 71, .95); }
+
+  /* Marks a conversation still being open, so you know you can just talk. */
+  .convo {
+    position: absolute; top: 4px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 4px; opacity: 0; transition: opacity .3s ease;
+  }
+  .convo.on { opacity: 1; }
+  .convo i {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: #22d3ee; box-shadow: 0 0 6px #22d3ee;
+    animation: hop 1.3s ease-in-out infinite;
+  }
+  .convo i:nth-child(2) { animation-delay: .18s; }
+  .convo i:nth-child(3) { animation-delay: .36s; }
+  @keyframes hop { 0%,100% { transform: translateY(0); opacity: .45; } 50% { transform: translateY(-4px); opacity: 1; } }
+</style>
+</head>
+<body>
+<div class="wrap" id="wrap" data-state="idle">
+  <div class="convo" id="convo"><i></i><i></i><i></i></div>
+  <div class="face-box" id="faceBox">
+    <div class="halo" id="halo"></div>
+    <div id="face" style="width:100%;height:100%"></div>
+  </div>
+  <div class="label" id="label">ready</div>
+</div>
+
+<script src="/static/face.js"></script>
+<script>
+const wrap  = document.getElementById("wrap");
+const label = document.getElementById("label");
+const halo  = document.getElementById("halo");
+const convo = document.getElementById("convo");
+const face  = new JarvisFace(document.getElementById("face"));
+
+const LABELS = {
+  idle: "ready", listening: "listening", transcribing: "hearing",
+  thinking: "thinking", speaking: "speaking",
+};
+
+let inConversation = false;
+let hideTimer = null;
+
+function setState(s) {
+  wrap.dataset.state = s;
+  label.textContent = LABELS[s] || s;
+  face.setState(s);
+
+  clearTimeout(hideTimer);
+  // Stay on screen while a conversation is open — you can keep talking, so
+  // the face should still be there to talk to.
+  if (s === "idle" && !inConversation) {
+    hideTimer = setTimeout(() => {
+      if (wrap.dataset.state === "idle" && !inConversation && window.pywebview?.api) {
+        window.pywebview.api.hide();
+      }
+    }, 2600);
+  }
+}
+
+function handle(evt) {
+  switch (evt.kind) {
+    case "state":       setState(evt.state); break;
+    case "audio_level":
+      face.setLevel(evt.level);
+      halo.style.transform = `scale(${1 + Math.min(evt.level * 5, 0.35)})`;
+      break;
+    case "speak_level": face.setSpeakLevel(evt.level); break;
+    case "conversation":
+      inConversation = !!evt.active;
+      convo.classList.toggle("on", inConversation);
+      if (!inConversation) setState(wrap.dataset.state);
+      break;
+  }
+}
+
+document.getElementById("faceBox").addEventListener("click", () => {
+  if (window.pywebview?.api) window.pywebview.api.activate();
+});
+document.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  if (window.pywebview?.api) window.pywebview.api.hide();
+});
+
+function connect() {
+  const socket = new WebSocket(`ws://${location.host}/ws`);
+  socket.onmessage = (raw) => handle(JSON.parse(raw.data));
+  socket.onclose = () => setTimeout(connect, 1500);
+}
+connect();
+</script>
+</body>
+</html>

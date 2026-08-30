@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+data/
+config/settings.json
+models/
+*.log
+
+# Claude Code local state (agent definitions in .claude/agents are tracked)
+.claude/*
+!.claude/agents/
+.claude/settings.local.json

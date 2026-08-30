@@ -1,0 +1,62 @@
+/* Jarvis's face — shared by the floating orb and the dashboard. */
+
+.jf-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  --ink: #22d3ee;
+}
+
+.jf-svg[data-state="listening"]    { --ink: #38bdf8; }
+.jf-svg[data-state="transcribing"],
+.jf-svg[data-state="thinking"]     { --ink: #fbbf24; }
+.jf-svg[data-state="speaking"]     { --ink: #34d399; }
+
+.jf-ink { transition: none; }
+
+.jf-frame,
+.jf-eye,
+.jf-brow,
+.jf-mouth,
+.jf-chin {
+  fill: none;
+  stroke: var(--ink);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke .45s ease;
+}
+
+.jf-frame { stroke-width: 12; }
+.jf-chin  { stroke-width: 7; opacity: .8; }
+.jf-brow  { stroke-width: 7; opacity: .9; }
+
+.jf-eye        { stroke-width: 9; }
+.jf-eye.closed { fill: none; }
+.jf-eye:not(.closed) { fill: var(--ink); }
+
+.jf-pupil {
+  fill: #041016;
+  transition: opacity .18s ease;
+}
+
+.jf-mouth {
+  stroke-width: 9;
+  transition: fill .2s ease;
+}
+.jf-mouth.open { fill: var(--ink); }
+
+.jf-tongue {
+  fill: #041016;
+  stroke: none;
+  transition: opacity .15s ease;
+}
+
+/* A soft halo behind the face, tinted to match the current state. */
+.jf-halo {
+  position: absolute;
+  inset: -14%;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--halo, #22d3ee) 30%, transparent), transparent 68%);
+  pointer-events: none;
+  transition: background .45s ease, transform .25s ease;
+}
