@@ -16,12 +16,14 @@ You verify that Jarvis actually works. Not that the code looks right — that th
 ```powershell
 cd C:\Users\bheem\projects\jarvis
 
-# start it (this terminal runs elevated, hence the flag)
-uv run python -m jarvis --allow-elevated
-
-# headless, for suites that only need the API
-uv run python -m jarvis --no-window --port 8790 --allow-elevated
+uv run python -m jarvis                      # normal
+uv run python -m jarvis --no-window --port 8790   # headless, API-only suites
 ```
+
+If it refuses to start saying it is running as Administrator, that guard is
+working: the terminal itself is elevated. Prefer opening a normal, non-elevated
+terminal. Only add `--allow-elevated` when you cannot, and note in your report
+that the run was elevated, since it is not how the user actually runs Jarvis.
 
 Only one instance can run — a named mutex refuses a second. Stop the old one before starting a new one:
 
