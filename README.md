@@ -179,6 +179,38 @@ there properly instead of showing raw characters.
 
 ---
 
+## Working on Jarvis with agents
+
+Four specialists live in `.claude/agents/`, so ongoing work has a consistent
+shape rather than being improvised each time.
+
+| Agent | Role |
+|---|---|
+| `jarvis-orchestrator` | Plans the work and delegates; the one to ask for anything end-to-end |
+| `jarvis-developer` | Implements features and fixes in `jarvis/` |
+| `jarvis-tester` | Writes and runs `scripts/check_*.py` against the **running** app |
+| `jarvis-git` | Commits and pushes to GitHub |
+
+The intended flow is **plan → develop → test → commit**, and the orchestrator
+runs it. Ask it for a whole job:
+
+> "Add a tool for my Hue lights, test it properly, and push it."
+
+Each agent carries the conventions that actually matter here: risk tiers on
+every tool, hard guards that are never weakened to make something pass, tests
+that run against real hardware rather than mocks, and a standing rule that
+`.env` never reaches the remote.
+
+Two habits are baked in deliberately, because both cost real time during the
+build: a failing test is not automatically a code bug (in this project the test
+has more often been the thing that was wrong), and work is never committed as
+verified unless it actually was.
+
+New agent definitions are picked up when a Claude Code session starts, so
+restart the session after editing them.
+
+---
+
 ## Security model
 
 The design goal was *full control of your desktop, zero privilege escalation*.
