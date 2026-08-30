@@ -681,6 +681,262 @@ def select_option(window: str, option: str, opener: str = "") -> dict:
     }
 
 
+_MENU_OPENER_TYPES = tuple(_USEFUL_TYPES - _READ_ONLY_TYPES)
+
+
+def _menu_click(pyautogui, x: int, y: int) -> None:
+    """Click a menu/flyout item reliably.
+
+    WinUI flyouts (Notepad's menu bar among them) sometimes miss a plain
+    ``click(x=, y=)`` -- that call warps the cursor and presses in the same
+    instant, and an item that hasn't visually registered the pointer entering
+    it yet doesn't always take the press. A separate move-then-click, with a
+    beat in between for the hover/highlight state to catch up, is markedly
+    more reliable for these menus specifically.
+    """
+    pyautogui.moveTo(x=x, y=y)
+    time.sleep(0.12)
+    pyautogui.click()
+
+
+def _open_menu(target, pyautogui, menu: str):
+    """Click a top-level menu/nav control and return the elements it reveals.
+
+    Shared by list_menu_items and click_menu_item. Menu items, like dropdown
+    options, typically do not exist in the accessibility tree until the menu
+    control that owns them is opened -- same pattern select_option uses for
+    dropdowns, but here the opener and the target are both explicit: you name
+    the menu ("File", or a hamburger/nav button) rather than guessing it from
+    the selected value.
+
+    Menu bar buttons commonly implement UIA's ExpandCollapse pattern, which
+    reports open/closed state directly -- far more reliable than diffing the
+    tree, and the only way to tell "already open" from "click did nothing"
+    before ever clicking. When it's available we trust it and skip the click
+    entirely if the menu is already expanded, so a second call right after
+    list_menu_items (which deliberately leaves the menu open) doesn't toggle
+    it shut. When it's not available (some apps don't implement it) we fall
+    back to comparing the tree before and after, and reopen once if the first
+    click revealed nothing -- that first click may have closed a menu a
+    previous, unrelated call left open.
+
+    Returns (before, after, opener_element, error). ``opener_element`` is None
+    and ``error`` is set if the menu control itself could not be found or
+    clicked.
+    """
+    from .inputs import on_screen
+
+    before = _scan(target)
+
+    # Live control, not just its scanned box: only the control object exposes
+    # patterns, and picking an interactive type favours the actual button
+    # over a same-named, same-position label that carries no pattern.
+    control = _find_control(target, menu, _MENU_OPENER_TYPES) or _find_control(target, menu)
+    if control is None:
+        return before, before, None, (
+            f"No menu or nav button named {menu!r} in this window. "
+            f"Available: {[e['name'] for e in before if e['clickable']][:12]}"
+        )
+
+    try:
+        name = (control.Name or menu).strip()
+        kind = control.ControlTypeName.replace("Control", "")
+        box = control.BoundingRectangle
+        x, y = box.xcenter(), box.ycenter()
+    except Exception:
+        return before, before, None, f"{menu!r} could not be read from this window."
+
+    if not on_screen(x, y):
+        return before, before, None, f"{menu!r} is off-screen."
+
+    opener = {"name": name, "type": kind, "x": x, "y": y, "clickable": True}
+
+    already_open = None
+    try:
+        state = control.GetExpandCollapsePattern().ExpandCollapseState
+        already_open = state == _auto().ExpandCollapseState.Expanded
+    except Exception:
+        already_open = None  # pattern unsupported here; fall back below
+
+    if already_open is not True:
+        _menu_click(pyautogui, x, y)
+        time.sleep(0.6)
+
+    after = _scan(target)
+    before_names = {(e["name"], e["type"]) for e in before}
+    revealed = [e for e in after if (e["name"], e["type"]) not in before_names]
+
+    # No pattern to trust and nothing new appeared -- most likely the click
+    # closed a menu a previous call left open. Reopen once.
+    if already_open is None and not revealed:
+        _menu_click(pyautogui, x, y)
+        time.sleep(0.6)
+        after = _scan(target)
+
+    return before, after, opener, None
+
+
+@tool(
+    risk=Risk.HIGH,
+    params={
+        "window": "Title of the app window.",
+        "menu": "Name of the top-level menu or nav button to open, e.g. 'File', "
+                "'Edit', or a hamburger-style button's accessible name.",
+    },
+    summary=lambda a: f"List items in the {a.get('menu', '?')!r} menu of {a.get('window', '?')}",
+    tags=["apps", "uia"],
+)
+def list_menu_items(window: str, menu: str) -> dict:
+    """Open a menu bar item or nav/hamburger button and list what appears, without clicking anything in it.
+
+    Menu items usually do not exist in the accessibility tree until the menu
+    that owns them is open, so this clicks ``menu`` once to reveal them, scans
+    what appeared, and reports it -- the same "open, then scan" step
+    select_option uses for dropdowns. If the menu is already open, it is left
+    open rather than being toggled shut. Use this to see what a menu contains
+    before deciding what to click with click_menu_item.
+    """
+    from .inputs import _pyautogui
+
+    try:
+        target = _open_window(window)
+    except LookupError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        target.SetActive()
+    except Exception:
+        pass
+    time.sleep(0.25)
+
+    pyautogui = _pyautogui()
+    before, after, opener, error = _open_menu(target, pyautogui, menu)
+    if error:
+        return {"ok": False, "error": error}
+
+    before_keys = {(e["name"], e["type"]) for e in before if e is not opener}
+    items = [
+        e for e in after
+        if (e["name"], e["type"]) not in before_keys and e["name"] != opener["name"]
+    ]
+
+    if not items:
+        return {
+            "ok": False,
+            "error": f"Opening {opener['name']!r} in {window!r} revealed nothing new. "
+                     f"It may not be a menu, or may need a different name.",
+            "opened": opener["name"],
+        }
+
+    return {
+        "menu": opener["name"],
+        "window": window,
+        "items": items,
+        "count": len(items),
+        "note": "Menu is left open. Use click_menu_item with an exact item name "
+                "from this list, or press_keys(['escape']) to dismiss it.",
+    }
+
+
+@tool(
+    risk=Risk.HIGH,
+    params={
+        "window": "Title of the app window.",
+        "menu": "Name of the top-level menu or nav button to open, e.g. 'File', "
+                "'Edit', or a hamburger-style button's accessible name.",
+        "item": "Exact name of the item within that menu to click, as reported "
+                "by list_menu_items.",
+    },
+    summary=lambda a: f"Click {a.get('item', '?')!r} in the {a.get('menu', '?')!r} menu of {a.get('window', '?')}",
+    tags=["apps", "uia"],
+)
+def click_menu_item(window: str, menu: str, item: str) -> dict:
+    """Open a menu bar item or nav/hamburger button and click a named item inside it.
+
+    Opens ``menu`` the same way list_menu_items does, then clicks ``item``
+    among what it reveals. Leaves no menu hanging open on failure -- if the
+    item cannot be found or the window doesn't confirm anything changed, it
+    presses Escape before returning, matching how select_option cleans up an
+    opened dropdown it couldn't complete.
+    """
+    from .inputs import _pyautogui, on_screen
+
+    try:
+        target = _open_window(window)
+    except LookupError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        target.SetActive()
+    except Exception:
+        pass
+    time.sleep(0.25)
+
+    pyautogui = _pyautogui()
+    before, after, opener, error = _open_menu(target, pyautogui, menu)
+    if error:
+        return {"ok": False, "error": error}
+
+    matches = _rank_matches(after, item)
+    if not matches:
+        pyautogui.press("escape")
+        before_keys = {(e["name"], e["type"]) for e in before if e is not opener}
+        revealed = [e["name"] for e in after
+                    if (e["name"], e["type"]) not in before_keys and e["name"] != opener["name"]]
+        return {
+            "ok": False,
+            "error": f"No item named {item!r} in the {opener['name']!r} menu of {window!r}.",
+            "available": revealed[:20],
+        }
+
+    target_item = matches[0]
+    if not on_screen(target_item["x"], target_item["y"]):
+        pyautogui.press("escape")
+        return {"ok": False, "error": f"{item!r} is off-screen."}
+
+    _menu_click(pyautogui, target_item["x"], target_item["y"])
+    time.sleep(0.6)
+
+    # Confirm the menu actually closed / state changed rather than trusting
+    # the click blindly -- mirrors select_option's after-the-fact check. A
+    # menu item that did something real makes itself disappear from the tree
+    # (the menu closes); one that's still sitting there openly suggests the
+    # click missed or the menu never dismissed.
+    def still_open() -> bool:
+        return any(
+            e["name"] == target_item["name"] and e["type"] == target_item["type"]
+            for e in _scan(target)
+        )
+
+    open_after_click = still_open()
+    # The window having just been raised with SetActive() means its very
+    # first click can be Windows' own "activate this window" click, which
+    # some apps swallow instead of passing through to the control -- the
+    # window is unquestionably focused by the second click, though, so retry
+    # once before concluding the item genuinely didn't respond.
+    if open_after_click:
+        _menu_click(pyautogui, target_item["x"], target_item["y"])
+        time.sleep(0.6)
+        open_after_click = still_open()
+
+    if open_after_click:
+        pyautogui.press("escape")
+
+    return {
+        "ok": not open_after_click,
+        "clicked": target_item["name"],
+        "menu": opener["name"],
+        "window": window,
+        "confirmed": not open_after_click,
+        "note": f"Clicked {target_item['name']!r} in the {opener['name']!r} menu; "
+                f"the menu closed as expected. Call inspect_app if you need to see "
+                f"the resulting state." if not open_after_click
+                else f"Clicked {target_item['name']!r}, but the menu is still open -- "
+                     f"the click may have missed or the item didn't do anything. "
+                     f"Pressed Escape to close it; check with inspect_app before retrying.",
+    }
+
+
 @tool(
     risk=Risk.SAFE,
     params={
