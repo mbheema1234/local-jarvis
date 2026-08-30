@@ -40,6 +40,10 @@ dependencies = [
     "ddgs>=9.16.0",
     "pywinauto>=0.6.9",
     "uiautomation>=2.0.29",
+    # --- Gmail (OAuth, not SMTP/IMAP) ---
+    "google-api-python-client>=2.199.0",
+    "google-auth-oauthlib>=1.4.1",
+    "google-auth-httplib2>=0.4.2",
 ]
 
 [tool.uv]

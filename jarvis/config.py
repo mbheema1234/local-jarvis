@@ -30,6 +30,7 @@ AUDIT_PATH = DATA_DIR / "audit.jsonl"
 MEMORY_PATH = DATA_DIR / "memory.json"
 APP_INDEX_PATH = DATA_DIR / "app_index.json"
 HISTORY_PATH = DATA_DIR / "history.json"
+GMAIL_TOKEN_PATH = DATA_DIR / "gmail_token.json"
 
 for _d in (CONFIG_DIR, DATA_DIR):
     _d.mkdir(parents=True, exist_ok=True)
@@ -267,3 +268,25 @@ def openrouter_key() -> str:
             "project root (copy .env.example)."
         )
     return key
+
+
+def google_client_id() -> str:
+    value = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+    if not value:
+        raise RuntimeError(
+            "GOOGLE_CLIENT_ID is not set. Put it in the .env file at the "
+            "project root (copy .env.example) -- see the Gmail setup section "
+            "in README.md."
+        )
+    return value
+
+
+def google_client_secret() -> str:
+    value = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+    if not value:
+        raise RuntimeError(
+            "GOOGLE_CLIENT_SECRET is not set. Put it in the .env file at the "
+            "project root (copy .env.example) -- see the Gmail setup section "
+            "in README.md."
+        )
+    return value

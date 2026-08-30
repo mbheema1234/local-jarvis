@@ -8,6 +8,7 @@ but are load-bearing -- each one populates ``registry.REGISTRY`` via the
 from . import (  # noqa: F401
     apps,
     assistant,
+    email,
     files,
     inputs,
     screen,
