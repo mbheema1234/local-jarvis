@@ -1,11 +1,12 @@
 # Roadmap
 
-## v0.1.0 — production (tagged on `main`)
+## v0.2.0 — production (tagged on `main`)
 
-The stable baseline. Tagged `v0.1.0` on commit `116ca70`. This is what runs day
-to day; nothing below the line changes it.
+Merged from `dev` and tagged on `main`. This is what runs day to day now.
+`v0.1.0` (commit `116ca70`) remains tagged as the prior baseline if a rollback
+is ever needed.
 
-A local, voice-driven desktop assistant for Windows with 68 tools across:
+A local, voice-driven desktop assistant for Windows with 73 tools across:
 
 - **Apps** — launch, close, force-quit, list installed/running, fuzzy name matching.
 - **Windows** — focus, minimize/maximize/close, snap, tile, show desktop.
@@ -15,8 +16,12 @@ A local, voice-driven desktop assistant for Windows with 68 tools across:
   `read_app_value` reach inside any already-open window (including Electron
   apps and browser tabs) by control name, no app-specific integration needed.
 - **Web** — `search_web`, `search_news`, `research` (Perplexity Sonar), and a
-  page-reading `fetch_url` (then SAFE-tiered, unhardened against non-HTML
-  content or unbounded downloads — see v0.2.0-dev).
+  page-reading `fetch_url`, hardened against non-HTML content and unbounded
+  downloads.
+- **UI menu navigation** — `list_menu_items`/`click_menu_item` open and
+  navigate menu bars and nav/hamburger flyouts in any app.
+- **Gmail** — `search_emails`/`read_email`/`send_email` via OAuth (see setup
+  status below).
 - **Input** — keyboard/mouse automation, multi-monitor aware.
 - **Files** — search, list, read, write, move, delete-to-Recycle-Bin, open.
 - **Screen** — multi-monitor vision (`see_screen`, `find_on_screen`).
@@ -25,16 +30,14 @@ A local, voice-driven desktop assistant for Windows with 68 tools across:
 Security model: never elevates, hard guards nothing can turn off (shell
 pattern-screening, fenced writes, Recycle-Bin-only deletes), tiered
 SAFE/MODERATE/HIGH confirmation, full audit log. See `README.md` → "Security
-model" for the complete picture — none of it changed in v0.2.0-dev.
+model" for the complete picture — none of it changed in v0.2.0.
 
----
+### What's new in v0.2.0
 
-## v0.2.0-dev — in progress on `dev`
+Three features, each independently verified live before being committed (see
+each commit's message for exactly what was tested).
 
-Not merged to `main`. Three features, each independently verified live before
-being committed (see each commit's message for exactly what was tested).
-
-### Web reading — hardened `fetch_url`
+#### Web reading — hardened `fetch_url`
 `jarvis/tools/web.py`
 
 The existing page-reader was upgraded rather than replaced: re-tiered
@@ -52,7 +55,7 @@ URL (clean rejection, no garbage output). The exact 8MB cutoff was code-
 reviewed but not exercised against real >8MB traffic — a known, minor,
 accepted gap.
 
-### UI menu navigation
+#### UI menu navigation
 `jarvis/tools/uia.py`
 
 Two new tools, both **`Risk.HIGH`** (a deliberate choice — new UI-automation
@@ -79,7 +82,7 @@ success) and Calculator's `Open Navigation` hamburger flyout (switching to
 Scientific mode and back, confirmed via the mode label text). Error paths
 (unknown menu, unknown item) fail cleanly and never leave a menu open.
 
-### Gmail integration
+#### Gmail integration
 `jarvis/tools/email.py`, `scripts/gmail_auth.py`
 
 OAuth-based (not raw SMTP/IMAP/app passwords), via
@@ -97,20 +100,21 @@ Requests only `gmail.readonly` + `gmail.send` scopes — not the broader
 cannot be completed by an agent, and saves the resulting token to
 `data/gmail_token.json` (gitignored).
 
-**Verified without live credentials** (the only thing possible in this
-environment — no Google Cloud OAuth client is configured yet): tool
-registration and schemas, clean error handling on missing/malformed/expired
-tokens (including a real network round-trip to Google's token endpoint that
-genuinely rejected fake credentials), and correct MIME construction / body
-decoding against realistic Gmail API payload shapes.
+OAuth consent is complete and `data/gmail_token.json` holds a real, live
+token. `send_email`'s risk tier and confirmation gate are **verified live**
+(real event bus, real policy resolver, denied before any network call could
+happen) and its MIME construction is verified against a stubbed Gmail
+service. `search_emails`/`read_email` still fail — not a code defect: the
+**Gmail API itself is not yet enabled** in the associated Google Cloud
+project (a separate toggle from granting OAuth scopes). Both tools return
+this cleanly as `{"ok": False, "error": "Gmail search failed: ..."}` rather
+than crashing.
 
-**Needs the user to complete before this does anything real**: create a
-Google Cloud project, enable the Gmail API, configure the OAuth consent
-screen, create a **Desktop app** OAuth Client ID, put
-`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` in `.env`, then run
-`uv run python scripts/gmail_auth.py` once. Full steps are in `README.md` →
-"Gmail setup". Until then, all three tools return a clean, actionable error
-rather than pretending to work.
+**One remaining step for the user**: visit
+https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=549471656060,
+click Enable, wait a minute or two for it to propagate, then rerun
+`uv run python scripts/check_email_live.py` to confirm `search_emails`/
+`read_email` against the real inbox.
 
 **Deliberately deferred**, not built: attachments, HTML email, drafts,
 reply-threading, multi-account support.
