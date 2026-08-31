@@ -65,8 +65,8 @@ def main() -> int:
             .execute()
         )
         account = profile.get("emailAddress", "unknown")
-    except Exception:
-        account = "unknown (could not confirm, but the token was saved)"
+    except Exception as exc:
+        account = f"unknown (could not confirm, but the token was saved -- {exc})"
 
     print(f"\n  Gmail is now authorized for: {account}")
     print(f"  Token saved to: {GMAIL_TOKEN_PATH}")

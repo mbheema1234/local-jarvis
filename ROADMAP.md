@@ -100,21 +100,12 @@ Requests only `gmail.readonly` + `gmail.send` scopes — not the broader
 cannot be completed by an agent, and saves the resulting token to
 `data/gmail_token.json` (gitignored).
 
-OAuth consent is complete and `data/gmail_token.json` holds a real, live
-token. `send_email`'s risk tier and confirmation gate are **verified live**
-(real event bus, real policy resolver, denied before any network call could
-happen) and its MIME construction is verified against a stubbed Gmail
-service. `search_emails`/`read_email` still fail — not a code defect: the
-**Gmail API itself is not yet enabled** in the associated Google Cloud
-project (a separate toggle from granting OAuth scopes). Both tools return
-this cleanly as `{"ok": False, "error": "Gmail search failed: ..."}` rather
-than crashing.
-
-**One remaining step for the user**: visit
-https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=549471656060,
-click Enable, wait a minute or two for it to propagate, then rerun
-`uv run python scripts/check_email_live.py` to confirm `search_emails`/
-`read_email` against the real inbox.
+**Fully live and verified against the real account** — `scripts/check_email_live.py`,
+26/26 passing. `search_emails`/`read_email` return real inbox data (subjects,
+senders, dates, decoded plain-text bodies); `send_email`'s HIGH risk tier and
+confirmation gate are verified against the real event bus and policy resolver
+(denied before any network call could happen) and its MIME construction is
+verified against a stubbed Gmail service — no real send was ever made.
 
 **Deliberately deferred**, not built: attachments, HTML email, drafts,
 reply-threading, multi-account support.
