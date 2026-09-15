@@ -684,19 +684,21 @@ def select_option(window: str, option: str, opener: str = "") -> dict:
 _MENU_OPENER_TYPES = tuple(_USEFUL_TYPES - _READ_ONLY_TYPES)
 
 
-def _menu_click(pyautogui, x: int, y: int) -> None:
-    """Click a menu/flyout item reliably.
+def _menu_click(pyautogui, x: int, y: int, button: str = "left") -> None:
+    """Click (or right-click) a menu/flyout item reliably.
 
     WinUI flyouts (Notepad's menu bar among them) sometimes miss a plain
     ``click(x=, y=)`` -- that call warps the cursor and presses in the same
     instant, and an item that hasn't visually registered the pointer entering
     it yet doesn't always take the press. A separate move-then-click, with a
     beat in between for the hover/highlight state to catch up, is markedly
-    more reliable for these menus specifically.
+    more reliable for these menus specifically. ``button`` is here for context
+    menus, which are summoned with a right-click rather than opened with a
+    left-click.
     """
     pyautogui.moveTo(x=x, y=y)
     time.sleep(0.12)
-    pyautogui.click()
+    pyautogui.click(button=button)
 
 
 def _open_menu(target, pyautogui, menu: str):
@@ -774,6 +776,319 @@ def _open_menu(target, pyautogui, menu: str):
         after = _scan(target)
 
     return before, after, opener, None
+
+
+def _top_level_keys(auto) -> set[tuple[str, str]]:
+    """Snapshot the desktop's top-level windows by (name, type).
+
+    Used to spot a context menu that appears as its own top-level popup
+    rather than nested inside the window you right-clicked -- see
+    ``_open_context_menu``.
+    """
+    keys: set[tuple[str, str]] = set()
+    try:
+        children = auto.GetRootControl().GetChildren()
+    except Exception:
+        return keys
+    for child in children:
+        try:
+            name = (child.Name or "").strip()
+            kind = child.ControlTypeName.replace("Control", "")
+        except Exception:
+            continue
+        keys.add((name, kind))
+    return keys
+
+
+def _new_top_level_window(auto, before_keys: set[tuple[str, str]]):
+    """Return the top-level window that appeared since ``before_keys``, if any."""
+    try:
+        children = auto.GetRootControl().GetChildren()
+    except Exception:
+        return None
+    for child in children:
+        try:
+            if child.IsOffscreen:
+                continue
+            name = (child.Name or "").strip()
+            kind = child.ControlTypeName.replace("Control", "")
+        except Exception:
+            continue
+        if (name, kind) not in before_keys:
+            return child
+    return None
+
+
+def _click_point_at_menu_corner(box, x: int, y: int, tolerance: int = 40) -> bool:
+    """Return whether (x, y) sits at (or very near) one of ``box``'s four corners.
+
+    A context menu is anchored at the point it was summoned from: Windows
+    draws the menu with that point at one of its four corners (normally
+    top-left, or another corner when the menu flips to stay on-screen near a
+    screen edge). Testing for that lines up the click point with wherever
+    the menu actually starts, and is independent of how big the menu turns
+    out to be -- unlike a distance-to-*center* test, which gets it backwards
+    as a menu grows: a context menu with two dozen items can be many times
+    taller than it is wide, which puts its center hundreds of pixels below
+    the click point even though the menu itself is genuinely, presently
+    open and anchored right there. ``tolerance`` covers the few pixels of
+    slack between the literal click point and the menu's drawn edge (borders,
+    shadows, DPI rounding) -- it is deliberately small compared to the old
+    center-distance radius, because it is testing proximity to a specific
+    corner rather than "somewhere near the whole menu".
+    """
+    near_x = abs(x - box.left) <= tolerance or abs(x - box.right) <= tolerance
+    near_y = abs(y - box.top) <= tolerance or abs(y - box.bottom) <= tolerance
+    return near_x and near_y
+
+
+def _desktop_menu_near(auto, x: int, y: int, tolerance: int = 40):
+    """Return an already-open top-level context menu near (x, y), if any.
+
+    Classic Win32 context menus (Explorer, the desktop, the taskbar) are
+    drawn as their own top-level popup window owned by the shell, with
+    ControlType "Menu", positioned right where you right-clicked -- not
+    nested inside the window you right-clicked, unlike the WinUI/UWP flyouts
+    _open_menu deals with. Matching on whether (x, y) sits at one of the
+    menu's own corners (see _click_point_at_menu_corner) keeps this from
+    mistaking some unrelated menu open elsewhere on the desktop (the Start
+    menu, another app's own open context menu) for the one we're about to
+    summon, without the false negatives a size-dependent radius test gives
+    on a tall menu.
+    """
+    try:
+        children = auto.GetRootControl().GetChildren()
+    except Exception:
+        return None
+    for child in children:
+        try:
+            if child.IsOffscreen:
+                continue
+            kind = child.ControlTypeName.replace("Control", "")
+            if kind != "Menu":
+                continue
+            box = child.BoundingRectangle
+        except Exception:
+            continue
+        if _click_point_at_menu_corner(box, x, y, tolerance):
+            return child
+    return None
+
+
+def _nested_menu_in(target, x: int, y: int, tolerance: int = 40, max_depth: int = 22):
+    """Return an already-open context menu nested inside ``target``'s own tree, if any.
+
+    Counterpart to ``_desktop_menu_near`` for WinUI/UWP apps that draw their
+    context menu as part of their own window instead of a separately-owned
+    top-level popup (modern Windows 11 Notepad among them) -- see
+    ``_open_context_menu`` for why that split exists. ``_desktop_menu_near``
+    cannot see these because they never appear as a child of the desktop
+    root; this walks ``target``'s own tree instead, looking for the same
+    ControlType "Menu" signature. Finding one here before ever right-clicking
+    lets a follow-up call reuse an already-open nested menu instead of
+    diffing against a stale baseline that already contains every one of its
+    items -- the bug this exists to close.
+
+    Matching on whether (x, y) sits at one of the menu's own corners (see
+    _click_point_at_menu_corner) mirrors ``_desktop_menu_near``'s reasoning:
+    the same window can have an unrelated "Menu"-typed flyout open elsewhere
+    (a File menu a previous _open_menu call left open, say), and that
+    shouldn't be mistaken for the context menu we're about to summon near
+    ``(x, y)``. A corner test discriminates against that just as well as a
+    center-distance one did, without rejecting a genuinely-open menu just
+    because it happens to be tall -- which a center-distance test does, since
+    a click point stays pinned to a corner no matter how many items the menu
+    ends up with, while the center recedes from it as the item count grows.
+    """
+    def walk(node, depth: int = 0):
+        if depth > max_depth:
+            return None
+        try:
+            children = node.GetChildren()
+        except Exception:
+            return None
+        for child in children:
+            try:
+                hidden = bool(child.IsOffscreen)
+                kind = child.ControlTypeName.replace("Control", "")
+                box = child.BoundingRectangle
+            except Exception:
+                continue
+            # An offscreen node is not a candidate, but must still be descended
+            # into -- the same split _scan makes. WinUI hangs these menus under
+            # an intermediate "Popup" host that reports IsOffscreen with a
+            # zero-size box while the Menu inside it is genuinely on screen, so
+            # skipping the subtree loses the very menu we came to find.
+            if not hidden and kind == "Menu" and _click_point_at_menu_corner(box, x, y, tolerance):
+                return child
+            found = walk(child, depth + 1)
+            if found is not None:
+                return found
+        return None
+
+    return walk(target)
+
+
+def _open_context_menu(target, pyautogui, control_name: str):
+    """Right-click a named element and return the elements the context menu reveals.
+
+    Shared by list_context_menu_items and click_context_menu_item. Context
+    menus need a different approach from _open_menu's menu bars and
+    nav/hamburger flyouts, for two reasons:
+
+    1. There is no dedicated "opener" control here with a pattern to read.
+       _open_menu can ask a menu-bar button's ExpandCollapsePattern whether
+       it is already expanded; a file in a list or a paragraph of text
+       carries no such "menu open" state to check -- the control you
+       right-click is not the menu, it just happens to summon one.
+
+    2. A second right-click is not a safe no-op the way a second left-click
+       on an already-expanded menu-bar button is (_open_menu just skips that
+       click). Right-clicking again -- even at the exact same point -- risks
+       *dismissing* an already-open context menu instead of reopening it.
+       That matters because list_context_menu_items deliberately leaves the
+       menu open (matching list_menu_items), so a follow-up
+       click_context_menu_item must not blindly right-click a second time.
+
+    So instead of a pattern check, this looks for an already-open context
+    menu *before* clicking anything, in both of the places one can be drawn:
+    a top-level popup with ControlType "Menu" positioned near the element
+    we're about to right-click (see _desktop_menu_near), or a "Menu"-typed
+    node nested inside the target window's own tree (see _nested_menu_in,
+    for WinUI/UWP apps that draw their context menu as part of the owning
+    window, the same way _open_menu's flyouts do). If either is there, it's
+    reused as-is and no click happens at all. Otherwise the target is
+    right-clicked once, and whatever appears is looked for in the same two
+    places: a freshly-appeared top-level popup (the classic Win32 case), or
+    a "Menu" node scanned directly out of the target window's own tree (the
+    WinUI/UWP case) -- scanned on its own, never by diffing the target
+    window's tree before vs. after, because a stale menu mid-teardown from a
+    previous call can poison that comparison (see the comment in the nested
+    branch below for the mechanism).
+
+    Note that both classic Win32 context menus (Explorer, the desktop, the
+    taskbar) and WinUI/UWP ones (modern Notepad's AI-enhanced menu among
+    them) stay open well beyond a single tool call's round-trip once a real
+    right-click summons them -- neither kind self-dismisses on any timescale
+    that matters here. That makes the pre-click reuse path above load-bearing
+    rather than a nicety: a follow-up call that failed to recognize a
+    genuinely still-open menu here would fall through to a second right-click
+    at the same point, and a second right-click on an open context menu
+    dismisses it without reopening anything -- turning a reusable menu into
+    an empty one. The corner-based matching in _desktop_menu_near and
+    _nested_menu_in exists specifically so that recognition doesn't fail on a
+    long menu (see _click_point_at_menu_corner) -- a center-distance test
+    used to reject exactly this case for any menu tall enough to push its
+    center outside the match radius, which read as the menu having vanished
+    on its own when it had not.
+
+    Returns (items, popup, opener, error). ``popup`` is the top-level control
+    the items were scanned from when they came from a separate popup window
+    (None if they were found nested in ``target`` instead) -- callers that
+    need to re-scan after clicking an item must scan whichever of the two
+    this is. ``opener`` is the right-clicked element; ``error`` is set, with
+    the other three None, if ``control_name`` could not be found or clicked.
+    """
+    from .inputs import on_screen
+
+    auto = _auto()
+    before = _scan(target)
+
+    control = _find_control(target, control_name)
+    if control is None:
+        return None, None, None, (
+            f"No element named {control_name!r} in this window. "
+            f"Available: {[e['name'] for e in before if e['clickable']][:12]}"
+        )
+
+    try:
+        name = (control.Name or control_name).strip()
+        kind = control.ControlTypeName.replace("Control", "")
+        box = control.BoundingRectangle
+        x, y = box.xcenter(), box.ycenter()
+    except Exception:
+        return None, None, None, f"{control_name!r} could not be read from this window."
+
+    if not on_screen(x, y):
+        return None, None, None, f"{control_name!r} is off-screen."
+
+    opener = {"name": name, "type": kind, "x": x, "y": y, "clickable": True}
+
+    existing = _desktop_menu_near(auto, x, y)
+    if existing is not None:
+        items = _scan(existing)
+        if items:
+            return items, existing, opener, None
+        # A "Menu"-typed popup sitting there with nothing in it yet is more
+        # likely mid-animation than genuinely open; fall through and click.
+
+    existing_nested = _nested_menu_in(target, x, y)
+    if existing_nested is not None:
+        items = _scan(existing_nested)
+        if items:
+            return items, None, opener, None
+        # Same reasoning as the popup case above: an empty "Menu" node is
+        # more likely mid-animation (or a stale, already-closing one) than
+        # genuinely open with content; fall through and click.
+
+    before_windows = _top_level_keys(auto)
+    _menu_click(pyautogui, x, y, button="right")
+    time.sleep(0.6)
+
+    popup = _new_top_level_window(auto, before_windows)
+    if popup is not None:
+        items = _scan(popup)
+        return items, popup, opener, None
+
+    # No separate popup appeared -- some apps (modern Notepad's AI-enhanced
+    # context menu among them) draw their context menu nested inside their
+    # own window instead of a separately-owned top-level one. Look for that
+    # "Menu" node directly with the same lookup existing_nested used above,
+    # searched fresh now that the click has happened, and scan its own
+    # children directly -- do NOT diff it against `before`. `before` was
+    # captured at the top of this function, and if some *other* menu in this
+    # window was already open at that instant (e.g. a File menu a previous
+    # _open_menu call left open, or -- before the corner-based match above
+    # existed to catch it -- this same context menu from a previous call that
+    # the geometry check had failed to recognize as still open), `before`
+    # would contain that menu's items under the very same (name, type) keys
+    # the fresh menu reuses: ("Copy", "Button"), ("Select all", "Button"),
+    # and so on. A before/after diff would then see every item in the
+    # genuinely-open fresh menu as "not new" and return an empty list, even
+    # though the menu is real, visible, and fully populated -- that
+    # contaminated-baseline bug is exactly what produced the misleading
+    # "No item named 'X'" / available: [] failures. Scanning the Menu node's
+    # own subtree sidesteps the trap entirely: it doesn't care what the
+    # window looked like before the click, only what the menu actually
+    # contains right now.
+    nested = _nested_menu_in(target, x, y)
+    if nested is not None:
+        items = _scan(nested)
+        if items:
+            return items, None, opener, None
+
+    # Neither a fresh top-level popup nor a nested Menu node turned up --
+    # last-resort fallback for whatever shape of app doesn't fit either
+    # pattern. This still carries the stale-baseline risk described above,
+    # but it is strictly better than reporting nothing.
+    #
+    # Deliberately not attempting here: right-clicking a second time on the
+    # theory that "a menu was open moments ago and this click just dismissed
+    # it, so click again to bring it back." Now that the reuse checks above
+    # match on corner rather than center, they should already have found and
+    # reused any menu that was genuinely still open before this function ever
+    # clicked anything -- so by the time control reaches here, the far more
+    # likely explanation is that nothing was open beforehand and this click
+    # simply revealed nothing (target has no context menu here, click missed,
+    # app is slow to draw). A blind extra right-click can't tell that case
+    # apart from the one it's meant to fix, and in the far more common case
+    # it would instead dismiss a menu this very click DID just open before
+    # anything got a chance to scan it -- reintroducing, one click later, the
+    # exact dismiss-what-you-meant-to-read bug this function exists to avoid.
+    after = _scan(target)
+    before_keys = {(e["name"], e["type"]) for e in before}
+    items = [e for e in after if (e["name"], e["type"]) not in before_keys]
+    return items, None, opener, None
 
 
 @tool(
@@ -931,6 +1246,180 @@ def click_menu_item(window: str, menu: str, item: str) -> dict:
         "note": f"Clicked {target_item['name']!r} in the {opener['name']!r} menu; "
                 f"the menu closed as expected. Call inspect_app if you need to see "
                 f"the resulting state." if not open_after_click
+                else f"Clicked {target_item['name']!r}, but the menu is still open -- "
+                     f"the click may have missed or the item didn't do anything. "
+                     f"Pressed Escape to close it; check with inspect_app before retrying.",
+    }
+
+
+@tool(
+    risk=Risk.HIGH,
+    params={
+        "window": "Title of the app window.",
+        "target": "Exact name of the element to right-click, as reported by "
+                  "inspect_app -- a file in File Explorer's file list, a "
+                  "paragraph of text, a desktop icon, a taskbar item.",
+    },
+    summary=lambda a: f"List the right-click menu for {a.get('target', '?')!r} in {a.get('window', '?')}",
+    tags=["apps", "uia"],
+)
+def list_context_menu_items(window: str, target: str) -> dict:
+    """Right-click a named element and list the context menu it reveals, without clicking anything in it.
+
+    Use this to see what right-clicking ``target`` offers before deciding
+    what to click with click_context_menu_item -- the same "open, then scan"
+    step list_menu_items uses for menu bars, but summoned with a right-click
+    on an ordinary element instead of a left-click on a dedicated menu
+    button. If a context menu already appears to be open near ``target``, it
+    is reused rather than right-clicked again, since a second right-click can
+    dismiss an open context menu instead of showing its contents.
+
+    This leaves the menu open deliberately, for click_context_menu_item to
+    reuse: both classic Win32 context menus (File Explorer, the desktop, the
+    taskbar) and WinUI/UWP ones (modern Notepad's AI-enhanced menu among
+    them) stay open on their own well beyond the time a follow-up tool call
+    takes to arrive -- nothing here needs to race a menu that is closing
+    itself. If something else does close it before the next call (Alt-Tab,
+    a click elsewhere, Escape), click_context_menu_item will simply
+    right-click and open its own fresh menu instead, which works fine as
+    long as the item name is the same.
+    """
+    from .inputs import _pyautogui
+
+    try:
+        win = _open_window(window)
+    except LookupError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        win.SetActive()
+    except Exception:
+        pass
+    time.sleep(0.25)
+
+    pyautogui = _pyautogui()
+    items, popup, opener, error = _open_context_menu(win, pyautogui, target)
+    if error:
+        return {"ok": False, "error": error}
+
+    if not items:
+        return {
+            "ok": False,
+            "error": f"Right-clicking {opener['name']!r} in {window!r} revealed "
+                     f"nothing. It may not have a context menu, or may need a "
+                     f"different name.",
+            "opened": opener["name"],
+        }
+
+    return {
+        "target": opener["name"],
+        "window": window,
+        "items": items,
+        "count": len(items),
+        "note": "The menu is generally still open at this point -- Use click_context_menu_item "
+                "with an exact item name from this list; it will reuse the menu if it's "
+                "still open, or reopen it fresh if something else closed it in the "
+                "meantime. press_keys(['escape']) dismisses it if you don't want to "
+                "click anything.",
+    }
+
+
+@tool(
+    risk=Risk.HIGH,
+    params={
+        "window": "Title of the app window.",
+        "target": "Exact name of the element to right-click, as reported by "
+                  "inspect_app -- a file in File Explorer's file list, a "
+                  "paragraph of text, a desktop icon, a taskbar item.",
+        "item": "Exact name of the item within the context menu to click, as "
+                "reported by list_context_menu_items.",
+    },
+    summary=lambda a: f"Click {a.get('item', '?')!r} in the right-click menu of {a.get('target', '?')!r} in {a.get('window', '?')}",
+    tags=["apps", "uia"],
+)
+def click_context_menu_item(window: str, target: str, item: str) -> dict:
+    """Right-click a named element and click a named item in the context menu that appears.
+
+    Opens the context menu on ``target`` the same way list_context_menu_items
+    does -- reusing one already open near ``target`` when a menu left by an
+    earlier list_context_menu_items call is still there (the normal case, for
+    both classic Win32 and WinUI/UWP context menus alike), or right-clicking
+    to open a fresh one itself when something else has since closed it. Then
+    clicks ``item`` among what it reveals. Leaves no menu hanging open on failure --
+    if the item cannot be found or the window doesn't confirm anything
+    changed, it presses Escape before returning, matching how click_menu_item
+    cleans up an opened menu it couldn't complete.
+    """
+    from .inputs import _pyautogui, on_screen
+
+    try:
+        win = _open_window(window)
+    except LookupError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        win.SetActive()
+    except Exception:
+        pass
+    time.sleep(0.25)
+
+    pyautogui = _pyautogui()
+    items, popup, opener, error = _open_context_menu(win, pyautogui, target)
+    if error:
+        return {"ok": False, "error": error}
+
+    matches = _rank_matches(items, item)
+    if not matches:
+        pyautogui.press("escape")
+        return {
+            "ok": False,
+            "error": f"No item named {item!r} in the context menu for "
+                     f"{opener['name']!r} in {window!r}.",
+            "available": [e["name"] for e in items][:20],
+        }
+
+    target_item = matches[0]
+    if not on_screen(target_item["x"], target_item["y"]):
+        pyautogui.press("escape")
+        return {"ok": False, "error": f"{item!r} is off-screen."}
+
+    _menu_click(pyautogui, target_item["x"], target_item["y"])
+    time.sleep(0.6)
+
+    # Confirm the click actually did something rather than trusting it
+    # blindly -- mirrors click_menu_item. Re-scan wherever the items came
+    # from: the popup window if the menu was its own top-level window, or the
+    # target window's own tree if the menu was nested there instead.
+    def still_open() -> bool:
+        source = popup if popup is not None else win
+        return any(
+            e["name"] == target_item["name"] and e["type"] == target_item["type"]
+            for e in _scan(source)
+        )
+
+    open_after_click = still_open()
+    # As with click_menu_item, the window having just been raised with
+    # SetActive() can swallow the very first click as Windows' own "activate
+    # this window" click on some apps -- retry once before concluding the
+    # item genuinely didn't respond.
+    if open_after_click:
+        _menu_click(pyautogui, target_item["x"], target_item["y"])
+        time.sleep(0.6)
+        open_after_click = still_open()
+
+    if open_after_click:
+        pyautogui.press("escape")
+
+    return {
+        "ok": not open_after_click,
+        "clicked": target_item["name"],
+        "target": opener["name"],
+        "window": window,
+        "confirmed": not open_after_click,
+        "note": f"Clicked {target_item['name']!r} in the context menu for "
+                f"{opener['name']!r}; the menu closed as expected. Call "
+                f"inspect_app if you need to see the resulting state."
+                if not open_after_click
                 else f"Clicked {target_item['name']!r}, but the menu is still open -- "
                      f"the click may have missed or the item didn't do anything. "
                      f"Pressed Escape to close it; check with inspect_app before retrying.",

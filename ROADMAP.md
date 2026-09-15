@@ -112,16 +112,70 @@ reply-threading, multi-account support.
 
 ---
 
+## v0.2.1-dev — on `dev`, not yet released
+
+#### Right-click context menus
+`jarvis/tools/uia.py`, `scripts/check_context_menu.py`
+
+The top item from the previous "What's next" list, now built. Two new tools,
+both **`Risk.HIGH`**, matching the tier the existing menu-bar tools use:
+
+- `list_context_menu_items(window, target)` — right-clicks a named element
+  and lists what the context menu reveals, without clicking anything in it.
+- `click_context_menu_item(window, target, item)` — right-clicks a named
+  element and clicks a named item in the menu that appears, cleaning up
+  rather than leaving a menu hanging open on failure.
+
+Context menus need a different approach from `_open_menu`'s menu bars and
+flyouts: there is no dedicated opener control with an `ExpandCollapsePattern`
+to read, and a second right-click *dismisses* an open menu rather than being
+the harmless no-op a second left-click on a menu-bar button is. So the tools
+detect an already-open menu before clicking anything — either a top-level
+shell-owned popup (classic Win32: Explorer, desktop, taskbar) or a `Menu`
+node nested inside the target window's own tree (WinUI/UWP, modern Notepad
+among them).
+
+**Verified live** against real Windows 11 Notepad — 15/15, deterministic
+across three consecutive runs. `Select all` then `Copy` was confirmed
+against the **real Windows clipboard** read by `Get-Clipboard` outside Jarvis
+entirely, not the tools' own self-reported success. Both error paths
+(nonexistent target, nonexistent item) fail cleanly and leave no menu open.
+Return-path logging confirmed the back-to-back reuse cases are served by the
+pre-click detection path specifically, so they pass because reuse genuinely
+works rather than because a fresh reopen happens to paper over it.
+
+Getting there took three distinct bugs, each hidden behind the one before it,
+all found by live testing rather than review — worth recording, since the
+first two were individually plausible and individually insufficient:
+
+1. **Stale diff baseline.** Items were found by diffing the window tree
+   before vs. after the right-click. With a menu already open from a prior
+   call, its items were already in the "before" snapshot, so every item of
+   the genuinely-open menu filtered out as "not new" — an empty list, and a
+   misleading "No item named X" error.
+2. **Size-dependent geometry test.** The already-open check matched a
+   candidate by testing whether the *menu's center* was within 400px of the
+   click point. A context menu is anchored at the click point as a *corner*,
+   so a tall menu's center recedes past that radius as items are added.
+   Measured: click point (981, 542) against a menu at left=981, top=542 —
+   the click sits exactly on the corner, 0px off. Now matched on corner
+   proximity, which is independent of how tall the menu is.
+3. **`IsOffscreen` pruning the whole subtree.** The tree walk skipped
+   offscreen nodes with a bare `continue`, which also skips everything
+   beneath them. WinUI hangs these menus under an intermediate `Window
+   "Popup"` host that reports `IsOffscreen=True` with a zero-size box while
+   the `Menu` inside it is genuinely on screen — so the branch holding the
+   real menu was pruned before the geometry test ever ran, making fix #2
+   unreachable. `_scan` in the same file already had the correct pattern:
+   descend into offscreen nodes, just don't treat them as candidates.
+
+---
+
 ## What's next
 
 A short list of genuinely useful follow-ups noticed while building the
 above — not a backlog dump.
 
-- **Right-click context menus.** `list_menu_items`/`click_menu_item` cover
-  menu bars and nav/hamburger flyouts, but not context menus opened by a
-  right-click. Same "open, then scan" pattern would likely extend to them
-  with a dedicated opener (simulate the right-click instead of a left-click
-  on a named control).
 - **Exercise the `fetch_url` 8MB cap against real traffic.** The streaming
   logic was code-reviewed, not proven against an actual >8MB response — worth
   a real test once a suitable stable large-file URL is on hand.
