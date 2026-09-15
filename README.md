@@ -264,7 +264,7 @@ to do it yourself.
 
 ## What it can do
 
-68 tools across:
+75 tools across:
 
 **Apps** — launch (single or several at once), close, force-quit, list installed
 and running, fuzzy name matching (`"my nvidia app"` → `NVIDIA App`).
@@ -308,6 +308,31 @@ mixes several pages together and a click can land on an invisible one.
 Once a sequence works, save it as a routine and it becomes one deterministic
 command. Two are set up already: `silent cooling` and `performance cooling`.
 
+**Menus** — the controls above only see what is already on screen, and menu
+items mostly do not exist in the accessibility tree until the menu is open. So
+menus get their own open-then-scan pair, in two flavours:
+
+- `list_menu_items` / `click_menu_item` — menu bars and nav/hamburger flyouts.
+- `list_context_menu_items` / `click_context_menu_item` — right-click menus.
+
+```
+You: "In Notepad, turn on word wrap"       →  opens View, clicks Word wrap
+You: "Right-click that file and copy it"   →  opens the context menu, clicks Copy
+```
+
+All four are `HIGH` risk, a deliberate step above the `MODERATE` tier of
+`click_element` — a tool that opens arbitrary menus and clicks inside them
+deserves a confirmation.
+
+Both flavours check whether a menu is *already* open before touching anything,
+because reopening is not free: a menu bar button toggles shut on a second
+click, and a second right-click dismisses a context menu outright. Menu bars
+can be asked directly via UI Automation's `ExpandCollapsePattern`. Context
+menus cannot — the element you right-click is not the menu — so those are found
+by looking for a `Menu` control anchored at the click point, whether Windows
+drew it as its own top-level popup (Explorer, the desktop) or nested inside the
+app's own window (WinUI apps, modern Notepad).
+
 **Input** — type text, key combinations, mouse click/move/scroll. Multi-monitor
 aware: coordinates span the whole virtual desktop, not just the primary screen.
 
@@ -331,6 +356,11 @@ instructed to search rather than guess, so anything current — scores, prices,
 weather, release dates — comes from the live web, not stale training data. It
 can also just open a search in your browser if you'd rather look yourself.
 
+**Email** — real Gmail access via OAuth (see [Gmail setup](#gmail-setup)), not
+raw SMTP/IMAP or an app password. `search_emails` and `read_email` are
+moderate risk; `send_email` is high risk and always asks you to confirm first,
+with no way to turn that off.
+
 **Assistant** — persistent memory (`"remember my main monitor is the left one"`),
 timers and reminders, and **routines**: named multi-step shortcuts.
 
@@ -340,6 +370,40 @@ You: "Run my gaming setup"        # from then on
 ```
 
 Routines are editable in the dashboard and run from a tile.
+
+---
+
+## Gmail setup
+
+Optional. Without it, `search_emails`, `read_email`, and `send_email` return a
+clean error telling you to do this. It uses Google's OAuth loopback flow, the
+same thing a real desktop app uses — never your Gmail password or an app
+password.
+
+1. Create a project at [console.cloud.google.com](https://console.cloud.google.com/)
+   (or reuse one you already have).
+2. **APIs & Services → Library** — search for "Gmail API" and enable it.
+3. **APIs & Services → OAuth consent screen** — choose **External**, fill in
+   the required fields, and leave it in **Testing** mode (no Google review
+   needed for personal use). Under **Test users**, add your own Gmail address
+   — in Testing mode, only listed test users can complete the consent flow.
+4. **APIs & Services → Credentials → Create Credentials → OAuth client ID** —
+   application type **Desktop app** (this matters: only the Desktop app type
+   supports the loopback redirect `run_local_server` uses, without having to
+   register a fixed redirect URI).
+5. Copy the generated **Client ID** and **Client secret** into `.env`:
+   ```
+   GOOGLE_CLIENT_ID=...apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=...
+   ```
+6. Run the one-time authorization script. It opens your browser, you sign in
+   and consent, and the token is saved to `data/gmail_token.json` (gitignored):
+   ```powershell
+   uv run python scripts\gmail_auth.py
+   ```
+
+From then on Jarvis refreshes the token itself — you only do this once, unless
+you revoke access from your Google account.
 
 ---
 
@@ -373,7 +437,7 @@ Changes apply immediately except the hotkey, which needs a restart.
 
 ```powershell
 uv run python scripts\smoke_imports.py       # native deps load, mic detected
-uv run python scripts\check_tools.py         # all 68 tools produce valid schemas
+uv run python scripts\check_tools.py         # all 75 tools produce valid schemas
 uv run python scripts\check_speech_text.py   # markdown never reaches the speech engine
 uv run python scripts\check_conversation.py  # multi-turn conversation, context, farewells
 uv run python scripts\check_escalation.py    # hands a stalled turn to the fallback model
