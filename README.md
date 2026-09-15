@@ -264,7 +264,7 @@ to do it yourself.
 
 ## What it can do
 
-68 tools across:
+75 tools across:
 
 **Apps** — launch (single or several at once), close, force-quit, list installed
 and running, fuzzy name matching (`"my nvidia app"` → `NVIDIA App`).
@@ -307,6 +307,31 @@ mixes several pages together and a click can land on an invisible one.
 
 Once a sequence works, save it as a routine and it becomes one deterministic
 command. Two are set up already: `silent cooling` and `performance cooling`.
+
+**Menus** — the controls above only see what is already on screen, and menu
+items mostly do not exist in the accessibility tree until the menu is open. So
+menus get their own open-then-scan pair, in two flavours:
+
+- `list_menu_items` / `click_menu_item` — menu bars and nav/hamburger flyouts.
+- `list_context_menu_items` / `click_context_menu_item` — right-click menus.
+
+```
+You: "In Notepad, turn on word wrap"       →  opens View, clicks Word wrap
+You: "Right-click that file and copy it"   →  opens the context menu, clicks Copy
+```
+
+All four are `HIGH` risk, a deliberate step above the `MODERATE` tier of
+`click_element` — a tool that opens arbitrary menus and clicks inside them
+deserves a confirmation.
+
+Both flavours check whether a menu is *already* open before touching anything,
+because reopening is not free: a menu bar button toggles shut on a second
+click, and a second right-click dismisses a context menu outright. Menu bars
+can be asked directly via UI Automation's `ExpandCollapsePattern`. Context
+menus cannot — the element you right-click is not the menu — so those are found
+by looking for a `Menu` control anchored at the click point, whether Windows
+drew it as its own top-level popup (Explorer, the desktop) or nested inside the
+app's own window (WinUI apps, modern Notepad).
 
 **Input** — type text, key combinations, mouse click/move/scroll. Multi-monitor
 aware: coordinates span the whole virtual desktop, not just the primary screen.
@@ -412,7 +437,7 @@ Changes apply immediately except the hotkey, which needs a restart.
 
 ```powershell
 uv run python scripts\smoke_imports.py       # native deps load, mic detected
-uv run python scripts\check_tools.py         # all 68 tools produce valid schemas
+uv run python scripts\check_tools.py         # all 75 tools produce valid schemas
 uv run python scripts\check_speech_text.py   # markdown never reaches the speech engine
 uv run python scripts\check_conversation.py  # multi-turn conversation, context, farewells
 uv run python scripts\check_escalation.py    # hands a stalled turn to the fallback model
